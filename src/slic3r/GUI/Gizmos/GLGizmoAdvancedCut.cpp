@@ -715,9 +715,20 @@ void GLGizmoAdvancedCut::update_plate_normal_boundingbox_clipper(const Transform
 
 void GLGizmoAdvancedCut::on_update(const UpdateData& data)
 {
+    // 1. GHOST LOGIC: Update position BEFORE the gatekeeper
+    if (m_connectors_editing) {
+        Vec3d pos;
+        Vec3d pos_world;
+        if (unproject_on_cut_plane(data.mouse_pos.cast<double>(), pos, pos_world)) {
+            m_localized_cut_pos = pos_world; 
+        }
+    }
+
     if (m_hover_id < 0)
         return;
+
     m_is_dragging = true;
+
     if (m_hover_id <= 2) { // drag rotate
         GLGizmoRotate3D::on_update(data);
         Vec3d rotation{ 0.0f, 0.0f, 0.0f };
@@ -730,45 +741,46 @@ void GLGizmoAdvancedCut::on_update(const UpdateData& data)
             }
         }
         const Transform3d rotation_tmp = m_start_dragging_m * Geometry::rotation_transform(rotation);
-        // deal rotate
         if (!is_approx(rotation, Vec3d(0, 0, 0))) {
             update_plate_normal_boundingbox_clipper(rotation_tmp);
         }
-    } // move plane
-    else if (m_hover_id == c_cube_z_move_id || m_hover_id == c_plate_move_id) {
+    } 
+    else if (m_hover_id == c_cube_z_move_id || m_hover_id == c_plate_move_id) { // move plane
         double move = calc_projection(m_drag_pos_start, data.mouse_ray, m_plane_normal);
         m_buffered_movement = m_movement = m_start_movement + move;
         update_plate_center(Axis::Z, move, true);
-    } // move x
-    else if (m_hover_id == c_cube_x_move_id && m_cut_mode == CutMode::cutTongueAndGroove) {
+    } 
+    else if (m_hover_id == c_cube_x_move_id && m_cut_mode == CutMode::cutTongueAndGroove) { // move x
         double move = calc_projection(m_drag_pos_start, data.mouse_ray, m_plane_x_direction);
         m_buffered_movement = m_movement = m_start_movement + move;
         update_plate_center(Axis::X, move, true);
-    } // dragging connectors
-    else if (m_connectors_editing && m_hover_id >= c_connectors_group_id) {
+    } 
+    else if (m_connectors_editing && m_hover_id >= c_connectors_group_id) { // drag existing connectors
         CutConnectors &connectors = m_c->selection_info()->model_object()->cut_connectors;
-        Vec3d          pos;
-        Vec3d          pos_world;
-
+        Vec3d pos;
+        Vec3d pos_world;
         if (unproject_on_cut_plane(data.mouse_pos.cast<double>(), pos, pos_world)) {
             connectors[m_hover_id - c_connectors_group_id].pos = pos;
         }
     }
+
     check_and_update_connectors_state();
 }
 
 void GLGizmoAdvancedCut::on_render()
 {
     if (m_state == On) {
-        // This gizmo is showing the object elevated. Tell the common
-        // SelectionInfo object to lie about the actual shift.
         m_c->selection_info()->set_use_shift(true);
     }
-    // check objects visibility
+
     toggle_model_objects_visibility();
 
-    update_clipper();
+    // (Removed the shadow function from here so it doesn't get painted over)
+
+    update_clipper(); 
     init_picking_models();
+
+    // Show placed connectors
     if (m_connectors_editing) {
         render_connectors();
     }
@@ -776,19 +788,125 @@ void GLGizmoAdvancedCut::on_render()
     if (m_part_selection) {
         if (!m_connectors_editing) {
             if (m_is_dragging == false) {
-                m_part_selection->part_render(nullptr,nullptr);
+                m_part_selection->part_render(nullptr, nullptr);
             }
         } else {
             m_part_selection->part_render(&m_plane_center, &m_plane_normal);
         }
     }
+
     if (!m_connectors_editing) {
         render_cut_plane_and_grabbers();
     }
-    // render_clipper_cut for get the cut plane result
+
     render_clipper_cut();
-    // render a cut line on screen by shift key and mouse move
     render_cut_line();
+
+    // THE VISIBILITY FIX: Draw the ghost absolute last so it paints ON TOP of everything
+    if (m_connectors_editing && m_hover_id < c_connectors_group_id) {
+        render_localized_cut_shadow();
+    }
+}
+
+bool GLGizmoAdvancedCut::on_mouse(const wxMouseEvent &mouse_event)
+{
+    // If we are in connector mode and the mouse is hovering...
+    if (m_connectors_editing && mouse_event.Moving()) {
+        Vec3d pos;
+        Vec3d pos_world;
+        
+        // Grab the raw X/Y from the mouse and unproject it to the 3D cut plane
+        if (unproject_on_cut_plane(Vec2d(mouse_event.GetX(), mouse_event.GetY()), pos, pos_world)) {
+            
+            // --- THE MAGNET MATH (HOVER PREVIEW) ---
+            if (m_auto_center_connector && m_c && m_c->object_clipper()) {
+                int contour_idx = m_c->object_clipper()->is_projection_inside_cut(pos_world);
+                
+                if (contour_idx >= 0) {
+                    // THE HEURISTIC: Is it a simple shape or a complex split?
+                    if (m_c->object_clipper()->get_number_of_contours() == 1) {
+                        m_localized_cut_pos = m_plane_center; // Mathematical perfection!
+                    } else {
+                        // Complex shape approximation!
+                        std::vector<Vec3d> contour_centers = m_c->object_clipper()->point_per_contour();
+                        if (contour_idx < contour_centers.size()) {
+                            Vec3d center_3d = contour_centers[contour_idx];
+                            double dist = (center_3d - m_plane_center).dot(m_plane_normal);
+                            m_localized_cut_pos = center_3d - dist * m_plane_normal;
+                        } else {
+                            m_localized_cut_pos = pos_world;
+                        }
+                    }
+                } else {
+                    m_localized_cut_pos = pos_world;
+                }
+            } else {
+                m_localized_cut_pos = pos_world;      
+            }
+            // ----------------------------------------
+            
+            // Force the 3D canvas to update the frame immediately
+            wxGetApp().plater()->get_current_canvas3D()->request_extra_frame(); 
+        }
+    }
+    
+    // Pass the event back up the chain!
+    return GLGizmoRotate3D::on_mouse(mouse_event);
+}
+
+void GLGizmoAdvancedCut::render_localized_cut_shadow()
+{
+    ::glEnable(GL_BLEND); 
+    ::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    ::glEnable(GL_CULL_FACE); 
+    ::glDisable(GL_DEPTH_TEST);
+    ::glDepthMask(GL_FALSE); 
+
+    const Camera& camera = wxGetApp().plater()->get_camera();
+    const auto& view_matrix = camera.get_view_matrix(); 
+    const auto& projection_matrix = camera.get_projection_matrix();
+
+    ColorRGBA shadow_color(0.38f, 0.41f, 0.57f, 0.65f); 
+
+    // Calculate transformations
+    Transform3d translate_tf = Transform3d::Identity();
+    translate_tf.translate(m_localized_cut_pos); 
+
+    Transform3d rotate_tf = Transform3d::Identity();
+    rotate_tf.rotate(Eigen::Quaterniond::FromTwoVectors(Vec3d::UnitZ(), m_plane_normal));
+
+    Transform3d scale_tf = Transform3d::Identity();
+    scale_tf.scale(Vec3f(m_connector_size / 2.0, m_connector_size / 2.0, m_connector_depth_ratio).cast<double>()); 
+
+    const Transform3d view_model_matrix = view_matrix * translate_tf * rotate_tf * scale_tf; 
+
+    if (m_shapes.empty()) {
+        init_connector_shapes();
+    }
+
+    if (!m_shapes.empty()) {
+        GLModel* shape_to_render = nullptr;
+        
+        // Find the correct shape
+        for (auto& pair : m_shapes) {
+            if (pair.first.type == m_connector_type && (int)pair.first.shape == (int)m_connector_shape_id) {
+                shape_to_render = &pair.second;
+                break;
+            }
+        }
+        
+        if (!shape_to_render) {
+            shape_to_render = &m_shapes.begin()->second;
+        }
+
+        // Render it
+        render_glmodel(*shape_to_render, shadow_color.get_data(), view_model_matrix, projection_matrix);
+    }
+
+    ::glEnable(GL_DEPTH_TEST);
+    ::glDepthMask(GL_TRUE); 
+    ::glEnable(GL_CULL_FACE);
+    ::glDisable(GL_BLEND);
 }
 
 void GLGizmoAdvancedCut::on_render_for_picking()
@@ -1680,6 +1798,35 @@ bool GLGizmoAdvancedCut::add_connector(CutConnectors &connectors, const Vec2d &m
     Vec3d pos;
     Vec3d pos_world;
     if (unproject_on_cut_plane(mouse_position.cast<double>(), pos, pos_world)) {
+        
+        // --- THE MAGNET MATH (CLICK OVERRIDE) ---
+        if (m_auto_center_connector && m_c && m_c->object_clipper()) {
+            int contour_idx = m_c->object_clipper()->is_projection_inside_cut(pos_world);
+            
+            if (contour_idx >= 0) {
+                Vec3d target_world;
+                
+                // THE HEURISTIC
+                if (m_c->object_clipper()->get_number_of_contours() == 1) {
+                    target_world = m_plane_center; // Mathematical perfection!
+                } else {
+                    // Complex shape approximation!
+                    std::vector<Vec3d> contour_centers = m_c->object_clipper()->point_per_contour();
+                    if (contour_idx < contour_centers.size()) {
+                        Vec3d center_3d = contour_centers[contour_idx];
+                        double dist = (center_3d - m_plane_center).dot(m_plane_normal);
+                        target_world = center_3d - dist * m_plane_normal;
+                    } else {
+                        target_world = pos_world; // Fallback
+                    }
+                }
+                
+                // THE FLAWLESS CONVERSION: Translate World to Local using the inverse rotation matrix
+                pos = m_rotate_matrix.inverse() * (target_world - m_plane_center);
+            }
+        }
+        // ----------------------------------------
+
         Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Add connector");
         unselect_all_connectors();
 
@@ -2591,6 +2738,14 @@ void GLGizmoAdvancedCut::render_connectors_input_window(float x, float y, float 
             if (m_connector_size_tolerance >= 0)
                 connectors[idx].radius_tolerance = m_connector_size_tolerance;
         });
+
+        // --- NEW: MIDDLE OF GEOMETRY CHECKBOX ---
+        ImGui::Checkbox("Middle of geometry", &m_auto_center_connector);
+        // ----------------------------------------
+
+    if (m_connector_type == CutConnectorType::Snap) {
+        m_imgui->text(_L("Snap global parameters") +": ");}
+
     if (m_connector_type == CutConnectorType::Snap) {
         m_imgui->text(_L("Snap global parameters") +": ");
         const std::string format = "%.0f %%";
