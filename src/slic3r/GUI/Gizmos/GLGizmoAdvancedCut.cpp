@@ -1712,7 +1712,7 @@ void GLGizmoAdvancedCut::init_connector_shapes()
         for (const CutConnectorStyle &style : {CutConnectorStyle::Frustum, CutConnectorStyle::Prizm})
             for (const CutConnectorShape &shape : {CutConnectorShape::Circle, CutConnectorShape::Hexagon, CutConnectorShape::Square, CutConnectorShape::Triangle}) {
                 CutConnectorAttributes     attribs = {type, style, shape};
-                CutConnectorParas          paras   = {m_snap_space_proportion, m_snap_bulge_proportion};
+                CutConnectorParas          paras   = {m_snap_space_proportion, m_snap_bulge_proportion, m_thread_pitch};
                 const indexed_triangle_set its     = ModelObject::get_connector_mesh(attribs, paras);
                 m_shapes[attribs].init_from(its);
             }
@@ -2739,9 +2739,61 @@ void GLGizmoAdvancedCut::render_connectors_input_window(float x, float y, float 
                 connectors[idx].radius_tolerance = m_connector_size_tolerance;
         });
 
-        // --- NEW: MIDDLE OF GEOMETRY CHECKBOX ---
-        ImGui::Checkbox("Middle of geometry", &m_auto_center_connector);
-        // ----------------------------------------
+    // --- Filament shrinkage preset dropdown (all connector types) ---
+    {
+        static const char* preset_labels[] = {
+            "Custom", "PLA", "PETG", "ABS", "ASA", "PA/Nylon", "TPU"
+        };
+        static const float preset_shrink[][2] = {
+            {0.000f, 0.000f},
+            {0.003f, 0.002f},
+            {0.004f, 0.003f},
+            {0.008f, 0.006f},
+            {0.007f, 0.005f},
+            {0.015f, 0.010f},
+            {0.005f, 0.004f},
+        };
+
+        ImGui::AlignTextToFramePadding();
+        m_imgui->text(_u8L("Filament"));
+        ImGui::SameLine(m_label_width);
+        ImGui::PushItemWidth(m_control_width);
+        if (ImGui::Combo("##filament_preset", &m_filament_preset,
+                         preset_labels, IM_ARRAYSIZE(preset_labels)))
+        {
+            if (m_filament_preset > 0) {
+                float r_tol = (0.5f * m_connector_size) *
+                              preset_shrink[m_filament_preset][0];
+                float h_tol = m_connector_depth_ratio *
+                              preset_shrink[m_filament_preset][1];
+                m_connector_size_tolerance = r_tol;
+                m_connector_depth_ratio_tolerance = h_tol;
+                apply_selected_connectors([r_tol, h_tol, &connectors](size_t idx) {
+                    connectors[idx].radius_tolerance = r_tol;
+                    connectors[idx].height_tolerance = h_tol;
+                });
+            }
+        }
+        ImGui::PopItemWidth();
+    }
+
+    // --- Middle of geometry checkbox ---
+    ImGui::Checkbox("Middle of geometry", &m_auto_center_connector);
+
+    // --- Thread pitch slider (Thread type only) ---
+    if (m_connector_type == CutConnectorType::Thread) {
+        ImGui::AlignTextToFramePadding();
+        m_imgui->text(_u8L("Pitch"));
+        ImGui::SameLine(m_label_width);
+        ImGui::PushItemWidth(m_control_width);
+        if (m_imgui->slider_float("##thread_pitch", &m_thread_pitch, 0.1f, 2.0f, "%.2f mm")) {
+            apply_selected_connectors([this, &connectors](size_t idx) {
+                connectors[idx].paras.thread_pitch = m_thread_pitch;
+            });
+            update_connector_shape();
+        }
+        ImGui::PopItemWidth();
+    }
 
     if (m_connector_type == CutConnectorType::Snap) {
         m_imgui->text(_L("Snap global parameters") +": ");}

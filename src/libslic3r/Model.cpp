@@ -1907,7 +1907,7 @@ indexed_triangle_set ModelObject::get_connector_mesh(CutConnectorAttributes conn
     
    // --- OUR THREAD PREVIEW ---
     else if (connector_attributes.type == CutConnectorType::Thread)
-        connector_mesh = its_make_thread( 1.0, 1.0, 0.2, (2 * PI / sectorCount));
+        connector_mesh = its_make_thread( 1.0, 1.0, para.thread_pitch, (2 * PI / sectorCount));
     
     // --- ORIGINAL LOGIC BELOW ---
     else if(connector_attributes.style == CutConnectorStyle::Prizm)

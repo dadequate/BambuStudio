@@ -270,6 +270,11 @@ struct CutConnectorParas
 {
     float snap_space_proportion{0.3};
     float snap_bulge_proportion{0.15};
+    float thread_pitch{0.2f};
+
+    template<class Archive> inline void serialize(Archive &ar) {
+        ar(snap_space_proportion, snap_bulge_proportion, thread_pitch);
+    }
 };
 
 struct CutConnectorAttributes
@@ -319,7 +324,7 @@ struct CutConnector
 
     bool operator!=(const CutConnector &other) const { return !(other == (*this)); }
 
-    template<class Archive> inline void serialize(Archive &ar) { ar(pos, rotation_m, radius, height, radius_tolerance, height_tolerance, attribs); }
+    template<class Archive> inline void serialize(Archive &ar) { ar(pos, rotation_m, radius, height, radius_tolerance, height_tolerance, attribs, paras); }
 };
 
 using CutConnectors = std::vector<CutConnector>;

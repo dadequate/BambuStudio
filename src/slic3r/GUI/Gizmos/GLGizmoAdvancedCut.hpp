@@ -175,6 +175,9 @@ private:
     float        m_snap_space_proportion{0.3f};
     float        m_snap_bulge_proportion{0.15f};
 
+    float        m_thread_pitch{0.2f};
+    int          m_filament_preset{0};
+
     TriangleMesh m_connector_mesh;
 
     // remember the connectors which is selected

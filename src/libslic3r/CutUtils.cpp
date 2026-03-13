@@ -110,7 +110,7 @@ static void process_connector_cut(ModelVolume *               volume,
             // --- OUR TRACER BULLET FOR THE THREAD ---
             if (volume->cut_info.connector_type == CutConnectorType::Thread) {
                 // Spawn a tall, skinny cylinder as a placeholder test
-                TriangleMesh mesh = TriangleMesh(its_make_thread(1.0, 1.0, 0.2, PI / 180.));
+                TriangleMesh mesh = TriangleMesh(its_make_thread(1.0, 1.0, 0.2 /* TODO: propagate pitch through cut_info */, PI / 180.));
 
                 vol = upper->add_volume(std::move(mesh));
                 vol->set_transformation(volume->get_transformation());
